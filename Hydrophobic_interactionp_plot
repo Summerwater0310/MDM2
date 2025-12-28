@@ -1,0 +1,77 @@
+import MDAnalysis
+import warnings
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import ListedColormap
+import re
+from matplotlib.patches import Patch
+import os 
+from matplotlib.colors import ListedColormap, BoundaryNorm  # 新增BoundaryNorm
+
+# work_dir = f"/home/summer_water/reference_MD_result/referenceMD"
+work_dir = f"/home/summer_water/auto_MD/4668"
+df = pd.read_csv(os.path.join(work_dir,f"residue_level_hydrophobic_interaction.csv"), index_col=0)
+print(df.min().min())
+print(df.max().max())
+# 1. 获取数据的最小值（负作用最大）和最大值（正作用最大）
+data_min = df.min().min()
+data_max = df.max().max()
+f = max(abs(data_min), abs(data_max))
+# 2. 定义颜色边界：[最小负, 0, 0, 最大正]
+# 注意：boundaries长度 = 颜色数 + 1，中间两个0是为了让“零”单独对应白色
+
+# 3. 定义颜色映射和对应的边界规则
+cmap = 'coolwarm'  # 蓝→白→橙（负→零→正）
+plt.figure(figsize=(10, 6))  
+ax = sns.heatmap(
+    df,  # 以0为中心
+    vmin = -f,
+    vmax = f,
+    cmap=cmap,  
+    annot=False,  
+    cbar=False, 
+    yticklabels=True, 
+    xticklabels=True,
+    linewidths=0.5,
+    linecolor='black'  
+)
+
+original_xticklabels = df.columns.astype(str)
+original_yticklabels = df.index.astype(str)
+
+interval = 1000  #label interval
+# 3. 生成要显示的刻度位置和对应的标签
+#    假设原始帧号是从 0 开始连续的，这里简单示例：只保留能被 interval 整除的标签
+#    更灵活的方式可根据实际标签内容判断
+show_indices = []
+show_labels = []
+for i, label in enumerate(original_xticklabels):
+    frame_num = int(label)
+    # 保留能被 interval 整除的标签，以及最后一个标签
+    if frame_num % interval == 0 or frame_num == len(original_xticklabels) - 1:
+        show_indices.append(i)
+        show_labels.append(label)
+show_indices.append(len(original_xticklabels))  # 确保最后一个标签也被显示
+show_labels.append('5000')  # 确保最后一个标签也被显示
+print(f"显示的 X 轴标签位置: {show_indices}, 标签内容: {show_labels}")
+# 4. 设置 X 轴刻度：指定哪些位置显示标签，以及显示什么标签
+ax.set_xticks(show_indices)
+ax.set_xticklabels(show_labels, rotation=0, ha="center")
+
+
+
+plt.title("Hydrophobic interaction", fontsize=14, pad=20)
+plt.xlabel("Time", fontsize=12)
+plt.ylabel('Residue', fontsize=12)
+legend_elements = [
+    Patch(facecolor="red", label='Positive interaction'),
+    Patch(facecolor="#8BAEEF", label='Negative interaction')
+]
+plt.legend(handles=legend_elements, title='Interaction types', 
+        loc='center left', bbox_to_anchor=(1, 0.5))
+
+plt.tight_layout()
+plt.savefig(os.path.join(work_dir,"residue_level_hydrophobic_interactionp.png"), dpi=300, bbox_inches="tight")
+print(f"Hydrophobic interaction analysis for refernece completed successfully.")
