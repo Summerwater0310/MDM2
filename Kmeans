@@ -1,0 +1,84 @@
+from rdkit.Chem import ChemicalFeatures
+from rdkit import RDConfig
+from rdkit.Chem.Pharm2D.SigFactory import SigFactory
+from rdkit.Chem.Pharm2D import Generate
+from rdkit import DataStructs
+from sklearn.cluster import KMeans
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from rdkit import Chem
+
+# 读取 SMILES 文件并返回分子列表
+def read_smi_file(file_path):
+    molecules = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if line:
+                try:
+                    mol = Chem.MolFromSmiles(line)
+                    if mol:
+                        molecules.append(mol)
+                    else:
+                        print(f"无法解析的 SMILES: {line}")
+                except Exception as e:
+                    print(f"解析 SMILES 时出错: {line}, 错误: {e}")
+    return molecules
+
+# 使用 RDKit 提供的药效团特征定义文件
+fdefName = r'C:\Users\minak\PycharmProjects\pythonProject2\.venv\Lib\site-packages\rdkit\Data\BaseFeatures.fdef'
+featFactory = ChemicalFeatures.BuildFeatureFactory(fdefName)
+sigFactory = SigFactory(featFactory, minPointCount=2, maxPointCount=3)
+sigFactory.SetBins([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)])
+sigFactory.Init()
+
+# 读取分子数据
+mols = read_smi_file(r"D:\ligand\structures.smi")
+
+# 生成分子的 2D 指纹
+fingerprints = []
+for mol in mols:
+    fp = Generate.Gen2DFingerprint(mol, sigFactory)
+    fingerprints.append(fp)
+
+# 将指纹转换为 numpy 数组
+fingerprints_array = np.array(fingerprints)
+
+# 使用 K-means 进行聚类
+num_clusters = 9  # 设定聚类的数量
+kmeans = KMeans(n_clusters=num_clusters, random_state=0)
+kmeans.fit(fingerprints_array)
+
+# 输出聚类结果
+labels = kmeans.labels_
+for i, mol in enumerate(mols):
+    print(f"分子 {i} 属于聚类 {labels[i]}")
+
+# 使用 PCA 将数据降维到 2D 以便可视化
+pca = PCA(n_components=2)
+fingerprints_2d = pca.fit_transform(fingerprints_array)
+
+# 绘制聚类结果
+plt.figure(figsize=(10, 7))
+for i in range(num_clusters):
+    cluster_points = fingerprints_2d[labels == i]
+    plt.scatter(cluster_points[:, 0], cluster_points[:, 1], label=f'Cluster {i}')
+plt.title('Molecular Clusters')
+plt.xlabel('PCA Component 1')
+plt.ylabel('PCA Component 2')
+plt.legend()
+plt.show()
+
+# 按聚类结果将分子分类并输出为 SMILES 文件
+cluster_mols = [[] for _ in range(num_clusters)]
+for i, mol in enumerate(mols):
+    cluster_index = labels[i]
+    cluster_mols[cluster_index].append(mol)
+
+# 将每个聚类的分子保存为 SMILES 文件
+for i, cluster in enumerate(cluster_mols):
+    smiles_list = [Chem.MolToSmiles(mol) for mol in cluster]
+    with open(f'cluster_{i}.smi', 'w') as f:
+        for smiles in smiles_list:
+            f.write(smiles + '\n')
