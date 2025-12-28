@@ -1,0 +1,60 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from rdkit.Chem import ChemicalFeatures
+from rdkit import RDConfig
+from rdkit.Chem.Pharm2D.SigFactory import SigFactory
+from rdkit.Chem.Pharm2D import Generate
+from rdkit import Chem
+
+# 读取分子数据的函数
+def read_smi_file(file_path):
+    molecules = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            line = line.strip()
+            if line:
+                try:
+                    mol = Chem.MolFromSmiles(line)
+                    if mol:
+                        molecules.append(mol)
+                    else:
+                        print(f"无法解析的SMILES: {line}")
+                except Exception as e:
+                    print(f"解析SMILES时出错: {line}, 错误: {e}")
+    return molecules
+
+# 使用 RDKit 提供的药效团特征定义文件
+fdefName = r'C:\Users\minak\PycharmProjects\pythonProject2\.venv\Lib\site-packages\rdkit\Data\BaseFeatures.fdef'
+featFactory = ChemicalFeatures.BuildFeatureFactory(fdefName)
+sigFactory = SigFactory(featFactory, minPointCount=2, maxPointCount=3)
+sigFactory.SetBins([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)])
+sigFactory.Init()
+
+mols = read_smi_file(r"D:\ligand\structures.smi")
+
+# 生成分子的2D指纹
+fingerprints = []
+for mol in mols:
+    fp = Generate.Gen2DFingerprint(mol, sigFactory)
+    fingerprints.append(fp)
+
+# 将指纹转换为numpy数组
+fingerprints_array = np.array(fingerprints)
+
+
+# 使用手肘法确定最合适的聚类数量 k
+sse = []
+k_values = range(1, 38)
+for k in k_values:
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    kmeans.fit(fingerprints_array)
+    sse.append(kmeans.inertia_)
+
+# 绘制手肘法图
+plt.figure(figsize=(10, 7))
+plt.plot(k_values, sse, marker='o')
+plt.title('Elbow Method For Optimal k')
+plt.xlabel('Number of clusters (k)')
+plt.ylabel('Sum of Squared Errors (SSE)')
+plt.show()
