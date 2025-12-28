@@ -1,0 +1,136 @@
+import MDAnalysis
+import warnings
+import numpy as np
+import os
+ligand_mask = "6250"
+topology = f"/home/summer_water/auto_MD/{ligand_mask}/parm7"
+trajectory = f"/home/summer_water/auto_MD/{ligand_mask}/prod.nc"
+output_file = f"/home/summer_water/auto_MD/analysis/{ligand_mask}/pipi_interaction.csv"
+
+ligand_resname = "MOL"
+ligand_aromatic_id = [[7,8,9,10,11,12,34,35,36,37,38],[24,25,26,27,28,29,50,51,52,53,54],[16,17,18,19,20,21,43,44,45,46]]
+
+#create output directory if not exists
+os.system(f"mkdir ./{ligand_mask}")
+# config relate to residues including pipi atoms
+RESIDUE_CONFIG = {
+    'TYR': ['CG', 'CD1', 'CE1', 'CZ', 'CE2', 'CD2','HD2','HE2','HE1','HD1'],
+    'PHE': ['CG', 'CD1', 'CE1', 'CZ', 'CE2', 'CD2','HD1','HE1','HZ','HE2','HD2'],
+    'HIE': ['CG', 'ND1', 'CE1', 'NE2', 'CD2','HE1','HE2','HD2'],
+}
+
+def correct_angle(angle):
+    if angle > 90:
+        angle = 180 - angle
+    elif 0 <= angle <= 90:
+        angle = angle
+    elif angle < 0:
+        print("angle < 0")
+    return angle
+
+def get_normal_vector(pipi_atoms_group):
+    center_of_mass = np.array(pipi_atoms_group.center_of_mass())
+    first_vector = np.array(pipi_atoms_group[0].position - center_of_mass) / np.linalg.norm(np.array(pipi_atoms_group[0].position - center_of_mass))
+    second_vector = np.array(pipi_atoms_group[3].position - center_of_mass) / np.linalg.norm(np.array(pipi_atoms_group[3].position - center_of_mass))
+    normal_vector = np.cross(first_vector, second_vector) / np.linalg.norm(np.cross(first_vector, second_vector))
+    return normal_vector
+
+def caculate_Dihedral_angle(ligand_aromatic_group, protein_aromatic_group):
+    # caculate the normal vector of the ligand
+    ligand_normal_vector = get_normal_vector(ligand_aromatic_group)
+    # caculate the normal vector of the protein
+    protein_normal_vector = get_normal_vector(protein_aromatic_group)
+    # caculate the dihedral angle
+    dihedral_angle = np.arccos(np.dot(ligand_normal_vector, protein_normal_vector)) * 180 / np.pi
+    dihedral_angle = correct_angle(dihedral_angle)
+    return dihedral_angle
+
+def dot_to_face_distance(l_group, p_group):
+    l_center_mass = np.array(l_group.center_of_mass())
+    p_center_mass = np.array(p_group.center_of_mass())
+    l_normal_vector = get_normal_vector(l_group)
+    l_p_vector = np.array(p_center_mass - l_center_mass)
+    dot_to_face_distance = np.abs(np.dot(l_p_vector,l_normal_vector) / np.linalg.norm(l_normal_vector))
+    return dot_to_face_distance
+
+def for_T_shape(offer_H_group,offer_pi_group):
+    H_distance_dict = {}
+    for atom in offer_H_group:
+        if atom.name[0] =='H':
+            H_distance = np.linalg.norm(np.array(atom.position) - np.array(offer_pi_group.center_of_mass()))
+            H_distance_dict[atom] = H_distance
+        else:
+            continue
+    H_distance_dict = sorted(H_distance_dict.items(), key=lambda x: x[1])
+    H_atom = H_distance_dict[0][0]
+    C = offer_H_group.select_atoms(f"name C* and bonded name {atom.name}")
+    if len(C) != 1:
+        print('C_num_error')
+    H_pi_distance = H_distance_dict[0][1]
+    C_H_vector = np.array(H_atom.position - C.positions) / np.linalg.norm(np.array(H_atom.position - C.positions))
+    pi_normal_vector = get_normal_vector(offer_pi_group)
+    C_H_to_pi_angle = np.arccos(np.dot(C_H_vector, pi_normal_vector)) * 180 / np.pi
+    C_H_to_pi_angle = correct_angle(C_H_to_pi_angle)
+    return H_pi_distance, C_H_to_pi_angle
+
+
+warnings.filterwarnings("ignore", category=UserWarning, module='MDAnalysis')
+u = MDAnalysis.Universe(topology,trajectory, topology_format='PARM7', )
+
+# Select ligand atoms
+ligand = u.select_atoms(f"resname {ligand_resname}",updating=True)
+ligand_aromatic_group_list = []
+for aromatic_id in ligand_aromatic_id:
+    aromatic_group = MDAnalysis.AtomGroup(aromatic_id,u)
+    ligand_aromatic_group_list.append(aromatic_group)
+
+# Select protein atoms
+beside_residues = u.select_atoms(f"around 20 resname {ligand_resname} ",updating=True)
+residues_list = beside_residues.split('residue')
+potential_residues_list = []
+residue_names_list = ['TYR', 'PHE', 'HIE']
+for residue in residues_list:
+    if residue.resnames[0] in residue_names_list and len(residue) >= 5:
+        potential_residues_list.append(residue)
+    else:
+        continue
+
+protein_aromatic_group_list = []
+for residue in potential_residues_list:
+    group= MDAnalysis.AtomGroup([],u)
+    for atom in residue:
+        if atom.name in RESIDUE_CONFIG[residue.resnames[0]]:
+            group += atom
+        else:
+            continue
+    if len(group) >= 5:
+        protein_aromatic_group_list.append(group)
+    else:
+        continue
+
+# start to caculate pipi-stacking
+with open(output_file, 'w') as f:
+    for ts in u.trajectory[::]:
+
+        for ligand_aromatic_group in ligand_aromatic_group_list:
+            for protein_aromatic_group in protein_aromatic_group_list:
+                # caculate the dihedral angle
+                dihedral_angle = caculate_Dihedral_angle(ligand_aromatic_group, protein_aromatic_group)
+                mass_center_distance = np.linalg.norm(np.array(ligand_aromatic_group.center_of_mass()) - np.array(protein_aromatic_group.center_of_mass()))
+                if 2 <dihedral_angle <= 20 and 3.3<=mass_center_distance<=4.0:   #不平行情况
+                    f.write(f"{ts.frame},")
+                elif 0 <= dihedral_angle <= 2 and 3.3 <= mass_center_distance <= 3.8:    #slipped
+                    v_normal_vector = get_normal_vector(ligand_aromatic_group) / np.linalg.norm(get_normal_vector(ligand_aromatic_group))
+                    l_p_vector = np.array(protein_aromatic_group.center_of_mass() - ligand_aromatic_group.center_of_mass()) / np.linalg.norm(np.array(protein_aromatic_group.center_of_mass() - ligand_aromatic_group.center_of_mass()))
+                    vector_angle = np.arccos(np.dot(v_normal_vector, l_p_vector)) * 180 / np.pi
+                    vector_angle = correct_angle(vector_angle)
+                    if 16 <= vector_angle <= 40:
+                        f.write(f"{ts.frame},")
+                    else:
+                        continue
+                elif 85 <=dihedral_angle<= 95:  #T-shape
+                    distance , angle = for_T_shape(protein_aromatic_group, ligand_aromatic_group)
+                    if 2.5 <= distance <=3.2 and 60 <= angle <= 120:
+                        f.write(f"{ts.frame},")
+        if ts.frame % 100 == 0:
+            print(f"已处理帧: {ts.frame}/{len(u.trajectory)}")
