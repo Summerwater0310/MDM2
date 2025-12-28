@@ -1,0 +1,107 @@
+import MDAnalysis
+import warnings
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib.colors import ListedColormap
+import re
+from matplotlib.patches import Patch
+import os 
+
+
+
+
+time_step = 50
+filter_rate=0.5
+# topology = f"/home/summer_water/reference_MD_result/referenceMD/parm7"
+# trajectory = f"/home/summer_water/reference_MD_result/referenceMD/prod.nc"
+# out_file = f"/home/summer_water/reference_MD_result/referenceMD"
+num = -74
+# ligand_resname = "NUT"
+topology = f"/home/summer_water/auto_MD/4668/parm7"
+trajectory = f"/home/summer_water/auto_MD/4668/prod.nc"
+out_file = f"/home/summer_water/auto_MD/4668"
+ligand_resname = "MOL"
+
+warnings.filterwarnings("ignore", category=UserWarning, module='MDAnalysis')
+u = MDAnalysis.Universe(topology,trajectory, topology_format='PARM7', )
+ligand = u.select_atoms(f"(name C* or name N* or name O*) and resname {ligand_resname}",updating=True)
+# Select atoms around the ligand, excluding water and hydrogen atoms
+hi_dict = {}
+for ts in u.trajectory[::time_step]: 
+    for l_atom in ligand:
+        around_atoms = u.select_atoms(f"not resname WAT and not name H* and not resname {ligand_resname} and around 4.4 type {l_atom.type}",updating=True)
+        # Iterate through the trajectory with a step size of zip_len
+        for atom in around_atoms:
+            if f'{l_atom.resname}{l_atom.name}-{atom.resname}{atom.resid}{atom.name}' not in [key for key in hi_dict]:
+                hi_dict[f'{l_atom.resname}{l_atom.name}-{atom.resname}{atom.resid}{atom.name}'] = [ts.frame]
+            else:
+                hi_dict[f'{l_atom.resname}{l_atom.name}-{atom.resname}{atom.resid}{atom.name}'].append(ts.frame)
+        if ts.frame % 100 == 0:  
+            print(f"已处理帧: {ts.frame}/{len(u.trajectory)}",flush=True)# 每隔 time_step 帧记录一次
+
+data_dict = {}
+
+for key,value in hi_dict.items():
+    filtered_value = [v for v in value if v != 0]  # 过滤掉 0 值
+    if len(filtered_value) >= len(u.trajectory[::time_step])*filter_rate: 
+        data_dict[key] = value
+    else:
+        continue
+
+frames = [ts.frame for ts in u.trajectory[::time_step]]
+# 创建空 DataFrame（行=原子对，列=帧号）
+df = pd.DataFrame(index=data_dict.keys(), columns=frames)
+
+catch_atom = re.compile(r'^MOL([CON])\d+-[A-Z]+\d+([CON]).*$')
+
+# 填充数据：存在相互作用的帧标记为 1，否则为 0
+for atom_pair, frames in data_dict.items():
+    try:
+        ligand_atom , protein_atom = catch_atom.match(atom_pair).groups()
+        if ligand_atom == 'C' and protein_atom == 'C':  
+            df.loc[atom_pair, frames] = 1.0
+        else:
+            df.loc[atom_pair, frames] = -1.0
+    except Exception as e:
+        continue
+    df.fillna(0.0, inplace=True)  # 填充缺失值为 0        
+    df = df.astype(int)  
+print(df)
+positive  = df[(df > 0).any(axis=1)]
+negative = df[(df < 0).any(axis=1)]
+print(positive.shape,negative.shape)
+
+def deal_data(df):
+    df['residue'] = df.index
+    df['residue'] = df['residue'].str.extract(r'-([A-Z]+\d+)')
+    rf = df.groupby('residue').agg(sum_positive)
+    return rf
+
+def sum_positive(col):
+    return col.sum()
+positive = deal_data(positive)
+negative = deal_data(negative)
+final = pd.concat([positive,negative],axis=0)
+def add_93_to_index(s):
+    # 用正则匹配“字母部分”和“数字部分”（如GLN53 → 字母=GLN，数字=53）
+    match = re.match(r'^([A-Za-z]+)(\d+)$', s)
+    if match:
+        letter_part = match.group(1)  # 字母部分（如GLN）
+        num_part = int(match.group(2))  # 数字部分（如53）
+        new_num = num_part + num  # 数字+93
+        return f"{letter_part}{new_num}"  # 拼接新索引（如GLN146）
+    else:
+        # 如果索引格式不匹配（如无数字），返回原索引
+        return s
+
+# 应用函数到整个索引，生成新索引
+final.index = final.index.map(add_93_to_index)
+
+final.to_csv(os.path.join(out_file,f"residue_level_hydrophobic_interaction.csv"))
+print(final)
+
+
+
+        
