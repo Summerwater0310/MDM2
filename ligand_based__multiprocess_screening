@@ -1,0 +1,75 @@
+from rdkit.Chem import ChemicalFeatures, AllChem  
+from rdkit import RDConfig, DataStructs, Chem  
+from rdkit.Chem.Pharm2D.SigFactory import SigFactory  
+from rdkit.Chem.Pharm2D import Generate  
+import multiprocessing as mp  
+import os  
+import logging  
+from typing import Generator  
+
+logging.basicConfig(filename='similarity.log', level=logging.INFO)  
+
+def init_worker():  
+    global feat_factory, sig_factory, target_fps  
+    fdef_name = os.path.join(RDConfig.RDDataDir, 'BaseFeatures.fdef')  
+    feat_factory = ChemicalFeatures.BuildFeatureFactory(fdef_name)  
+    sig_factory = SigFactory(feat_factory, minPointCount=2, maxPointCount=3)  
+    sig_factory.SetBins([(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)])  
+    sig_factory.Init()   
+    target_smiles = [
+            'CCOc1cc(OC)ccc1C1=N[C@@H](c2ccc(Br)cc2)[C@@H](c2ccc(Br)cc2)N1C(=O)N1CCN(CCO)CC1',
+            'CC[C@@H](C(=O)OC(C)(C)C)N1C(=O)[C@@H](CC(=O)O)C[C@H](c2cccc(Cl)c2)[C@H]1c1ccc(Cl)cc1',
+            'COc1ccccc1-n1nc2c(c1C(C)C)[C@H](c1ccc(Cl)cc1C)N(c1cc(Cl)ccc1OCCN(C)C)C2=O',
+            'O=C(O)c1[nH]c2cc(Cl)ccc2c1-c1c(-c2ccccc2)ncn1Cc1ccc(Cl)cc1',
+            'CC1C(C(O)O)CCC2C1NN1C2C[C@H]2[C@@H]1[C@H](C1CCCC(Cl)C1F)[C@]1(C(O)NC3CC(Cl)CCC31)N2CC1CC1',
+            'CC(C)(C)CN1C[C@@H](N)[C@H](c2cccc(Cl)c2)[C@]12C(=O)Nc1cc(Cl)ccc12',
+            'CC(C)(C)S(=O)(=O)C[C@H](C1CC1)N1C(=O)[C@@H](CC(=O)O)O[C@H](c2cccc(Cl)c2)[C@H]1c1ccc(Cl)cc1',
+            'COc1cc(C(N)=O)ccc1NC(=O)[C@@H]1N[C@@H](CC(C)(C)C)[C@@]2(C(=O)Nc3cc(Cl)sc32)[C@H]1c1cccc(Cl)c1F',
+            'CC(C)(C)NC(=O)[C@@H](c1c(C(=O)O)[nH]c2cc(Cl)ccc12)N(C=O)Cc1ccc(OCc2ccc(Cl)cc2)cc1'] 
+    target_fps = []  
+    for smi in target_smiles:  
+        mol = Chem.MolFromSmiles(smi)  
+        if mol:  
+            target_fps.append(Generate.Gen2DFingerprint(mol, sig_factory))  
+
+def process_mol(mol: Chem.Mol) -> list:  
+    try:  
+        fp = Generate.Gen2DFingerprint(mol, sig_factory)  
+        results = []  
+        for target_fp in target_fps:  
+            similarity = DataStructs.TanimotoSimilarity(fp, target_fp)  
+            if similarity >= 0.1:  
+                results.append((Chem.MolToSmiles(mol), similarity))  
+        return results  
+    except Exception as e:  
+        logging.error(f"Fail: {Chem.MolToSmiles(mol)}, Error: {str(e)}")  
+        return []  
+
+def batch_processor(batch: list) -> None:   
+    with mp.Pool(initializer=init_worker) as pool:  
+        results = pool.map(process_mol, batch)  
+        for mol_results in results:  
+            for smiles, sim in mol_results:  
+                logging.info(f"{smiles} {sim:.4f}")  
+
+if __name__ == "__main__":  
+    def mol_stream(file_path: str) -> Generator[Chem.Mol, None, None]:  
+        with open(file_path) as f:  
+            for line in f:  
+                mol = Chem.MolFromSmiles(line.strip())  
+                if mol:  
+                    yield mol  
+
+    BATCH_SIZE = 500  
+    stream = mol_stream("enamine_db.smi")  
+    
+    batch = []  
+    for mol in stream:  
+        batch.append(mol)  
+        if len(batch) >= BATCH_SIZE:  
+            batch_processor(batch)  
+            batch = []   
+            if hasattr(Chem, '_free'):  
+                Chem._free()  
+    if batch:  
+        batch_processor(batch)
