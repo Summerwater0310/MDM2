@@ -1,0 +1,126 @@
+import os
+from rdkit import Chem
+from rdkit.Chem.Draw import rdMolDraw2D  
+from PIL import Image, ImageDraw, ImageFont  # 新增：用于手动画标签
+from io import BytesIO
+
+def smiles_to_grid_image(smiles_file, output_file="molecules_grid_final.png", 
+                         cols=4, figsize=(3000, 3000), dpi=300,
+                         label_font_size=12):
+    # 1. 读取并过滤SMILES（原逻辑不变）
+    with open(smiles_file, 'r') as f:
+        smiles_list = [line.strip() for line in f if line.strip()]
+    
+    valid_mols = []
+    labels = []
+    for i, smiles in enumerate(smiles_list, 1):
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is not None:
+            valid_mols.append(mol)
+            labels.append(f"Compound{i} (PDB ID: {smiles[-4:]})")  # 你的标签
+        else:
+            print(f"警告: 无效的SMILES - 第{i}个: {smiles}")
+    
+    if not valid_mols:
+        print("错误: 没有有效分子")
+        return
+
+    # 2. 计算核心尺寸（关键：预留标签空间）
+    total_width, total_height = figsize
+    num_mols = len(valid_mols)
+    num_rows = (num_mols + cols - 1) // cols  # 总行数
+    
+    # 单个分子区域的总高度 = 分子图像高度 + 标签高度（预留50像素放标签）
+    label_height = 50  # 固定给标签留50像素高度（避免和分子重叠）
+    sub_mol_height = (total_height // num_rows) - label_height  # 分子图像实际高度
+    sub_width = total_width // cols  # 单个分子区域的宽度（分子+标签共用）
+
+    # 3. 核心修复：渲染分子 + 手动用PIL画标签（不依赖RDKit任何标签方法）
+    def render_single_mol_with_label(mol, label):
+        # --------------------------
+        # 第一步：用RDKit渲染纯分子（无标签）
+        # --------------------------
+        # 渲染器尺寸：宽度=sub_width，高度=sub_mol_height（只画分子）
+        drawer = rdMolDraw2D.MolDraw2DCairo(sub_width, sub_mol_height)
+        opts = drawer.drawOptions()
+        # 配置分子样式（原子标签、化学键）
+        opts.fontSize = 10  # 分子内原子标签大小
+        opts.bondLineWidth = 1.5  # 化学键宽度（防模糊）
+        opts.padding = 0.05  # 分子留边距，避免超出图像
+        # 只画分子，不处理标签
+        drawer.DrawMolecule(mol)
+        drawer.FinishDrawing()
+        # 转成PIL图像（仅分子）
+        mol_img = Image.open(BytesIO(drawer.GetDrawingText())).convert("RGB")
+
+        # --------------------------
+        # 第二步：用PIL创建“分子+标签”的合并图像
+        # --------------------------
+        # 创建合并画布：宽度=sub_width，高度=分子高度+标签高度
+        combined_height = sub_mol_height + label_height
+        combined_img = Image.new("RGB", (sub_width, combined_height), color=(255, 255, 255))  # 白色背景
+        
+        # 把分子图像粘贴到合并画布的上方（y=0，x=0）
+        combined_img.paste(mol_img, (0, 0))
+
+        # --------------------------
+        # 第三步：用PIL在合并画布下方画标签
+        # --------------------------
+        draw = ImageDraw.Draw(combined_img)
+        # 加载字体（Windows默认Arial字体，路径固定；如果报错，手动替换字体路径）
+        try:
+            font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", size=label_font_size)
+        except IOError:
+            #  fallback：如果Arial字体找不到，用PIL默认字体
+            font = ImageFont.load_default(size=label_font_size)
+        
+        # 计算标签文字的宽度（用于居中显示）
+        text_width = draw.textlength(label, font=font)
+        # 标签的x坐标 = (画布宽度 - 文字宽度) / 2（水平居中）
+        text_x = (sub_width - text_width) // 2
+        # 标签的y坐标 = 分子高度 + 10（向下偏移10像素，避免紧贴分子）
+        text_y = sub_mol_height + 10
+        
+        # 绘制标签文字（黑色，居中）
+        draw.text((text_x, text_y), label, font=font, fill=(0, 0, 0))  # fill=(0,0,0)是黑色文字
+
+        return combined_img  # 返回“分子+标签”的最终图像
+
+    # 4. 手动拼接所有“分子+标签”图像到总画布
+    total_canvas = Image.new("RGB", (total_width, total_height), color=(255, 255, 255))  # 总画布
+
+    for idx, (mol, label) in enumerate(zip(valid_mols, labels)):
+        # 计算当前分子在总画布上的位置
+        col_idx = idx % cols  # 当前列（0到cols-1）
+        row_idx = idx // cols  # 当前行（0到num_rows-1）
+        # x坐标 = 列索引 * 单个宽度
+        x = col_idx * sub_width
+        # y坐标 = 行索引 * （分子高度+标签高度）
+        y = row_idx * (sub_mol_height + label_height)
+
+        # 渲染“分子+标签”图像
+        single_combined_img = render_single_mol_with_label(mol, label)
+
+        # 粘贴到总画布
+        total_canvas.paste(single_combined_img, (x, y))
+
+    # 5. 保存高清图片
+    total_canvas.save(output_file, dpi=(dpi, dpi))
+    print(f"高质量PNG已保存至: {os.path.abspath(output_file)}")
+    
+    # 6. 自动打开图片（Windows）
+    try:
+        os.startfile(output_file)
+    except Exception as e:
+        print(f"自动打开图片失败: {e}")
+
+if __name__ == "__main__":
+    # 调用函数（标签大小通过label_font_size控制）
+    smiles_to_grid_image(
+        smiles_file=r"D:\湖南师范大学时段\大二\Structures2.smi",
+        output_file="molecules_grid_manual_label.png",
+        cols=5,          # 7列网格
+        figsize=(3500, 3500),  # 总尺寸（3500÷7=500，单个宽度500像素）
+        dpi=300,
+        label_font_size=30  # 自定义标签大小（14号字，可改）
+	    )
