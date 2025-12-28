@@ -1,0 +1,73 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+work_dir= r'D:\analysis'  # 修改为你的工作目录
+file_list =os.listdir(work_dir)
+mask_frame_dict = {}
+for f in file_list:
+    try:
+        if type(eval(f)) == int:
+            mask_frame_dict[f] = 0
+    except:
+        continue
+
+
+for mask in mask_frame_dict.keys():
+    with open(os.path.join(work_dir,{mask},'pipi_interaction.csv'), 'r') as f:
+        line = f.read()
+        num_list = line.split(',')
+        mask_frame_dict[mask] = len(num_list)-1
+sorted_mask_frame_dict = dict(sorted(mask_frame_dict.items(), key=lambda x: x[1], reverse=False))
+
+
+# 生成示例数据
+
+categories = list(sorted_mask_frame_dict.keys())  # 类别（mask 名称）
+values = list(sorted_mask_frame_dict.values())  # 数值（对应的帧数）
+
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# 计算颜色深浅（归一化处理，不变）
+norm = plt.Normalize(min(values), max(values))
+cmap = plt.cm.Reds  # 蓝色色系，可替换
+
+# 创建柱状图 → 改为水平柱状图 ax.barh
+# 原：bars = ax.bar(...)
+# 现：用 barh，参数调整为（y 轴类别, x 轴数值）
+bars = ax.barh(
+    categories,  # Y 轴显示类别（原 X 轴）
+    values,      # X 轴显示数值（原 Y 轴）
+    color=cmap(norm(values)),  # 颜色映射（不变）
+    edgecolor='black'          # 柱边缘颜色（不变）
+)
+
+# 添加颜色条（逻辑不变，无需修改）
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
+cbar = plt.colorbar(sm, ax=ax)
+
+
+# 设置图表标题和坐标轴标签 → 适配水平柱状图
+# 原 X 轴 → 现 Y 轴，原 Y 轴 → 现 X 轴
+ax.set_title('pi-pi stacking', fontsize=15)  # 标题按需改
+ax.set_xlabel('frame', fontsize=12)         # 原 Y 轴 → 新 X 轴含义
+ax.set_ylabel('mask', fontsize=12)         # 原 X 轴 → 新 Y 轴含义
+
+# 添加数据标签 → 适配水平柱状图的坐标逻辑
+# 垂直柱状图用 get_x()、get_width()；水平柱状图用 get_y()、get_height()
+for bar in bars:
+    width = bar.get_width()  # 水平柱的“长度”（对应原高度）
+    # 标签位置：Y 轴中心（bar.get_y() + 柱高/2），X 轴右侧（width + 0.1）
+    ax.text(
+        width + 0.1,                # X 坐标：柱长度 + 偏移
+        bar.get_y() + bar.get_height()/2.,  # Y 坐标：柱中心
+        f'{width}',                 # 显示数值（长度）
+        ha='left',                  # 水平对齐：左对齐（适配 X 轴右侧）
+        va='center'                 # 垂直对齐：居中
+    )
+
+# 显示图表（不变）
+plt.tight_layout()
+plt.show()
