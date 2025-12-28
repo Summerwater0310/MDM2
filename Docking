@@ -1,0 +1,55 @@
+import os
+os.system("rm 5C5A_ligands.index")
+os.system("rm rundock.sh")
+os.system("rm unidocklog.out")
+os.system("rm -r resluts")
+
+files = os.listdir('/home/zysun/for_unidock/uni_ligand_prep/uniligprep_output')#每次要修改的sdf存放位置
+with open("5C5A_ligands.index", "w") as f: #在你所在文件夹下生成一个5C5A_ligands.index文件
+    f.write("\n".join([os.path.join("/home/zysun/for_unidock/uni_ligand_prep/uniligprep_output", f) for f in files]))#进行蛋白对接的配体文件绝对路径
+
+
+config = {
+    "target": "def",  # Protein target name 蛋白靶点名称
+    "receptor": "/home/zysun/5C5A.pdbqt",  # Protein receptor file path 蛋白受体文件路径
+    "ligand_index": "def_ligands.index",  # Ligand index file path 配体索引文件路径
+    # "search_mode": "detailed",  # Docking search mode [fast, balanced, detailed] 对接搜索模式[fast, balanced, detailed]  
+    "seed": 5,  # Random seed 随机种子
+    "sf": "vinardo",  # Scoring function [vina, vinardo] 打分函数[vina, vinardo]
+    "center_x": -10.34,  # Docking box center x coordinate 对接盒中心x坐标
+    "center_y": 3.47,  # Docking box center y coordinate 对接盒中心y坐标
+    "center_z": -23.88,  # Docking box center z coordinate 对接盒中心z坐标
+    "size_x": 19.95,  # Docking box size x 对接盒尺寸x
+    "size_y": 19.98,  # Docking box size y 对接盒尺寸y
+    "size_z": 16.95  # Docking box size z 对接盒尺寸z
+}
+
+search_mode = "balenced"
+cmd =  "/software/unidock/Uni-Dock-main/unidock/build/unidock"
+cmd += f" --receptor {config['receptor']} "  # Protein receptor file parameter 蛋白受体文件参数
+cmd += f"--ligand_index {config['ligand_index']} "  # Ligand index parameter 配体索引参数
+cmd += f"--center_x {config['center_x']:.2f} "  # Docking box center x coordinate parameter 对接盒中心x坐标参数
+cmd += f"--center_y {config['center_y']:.2f} "  # Docking box center y coordinate parameter 对接盒中心y坐标参数
+cmd += f"--center_z {config['center_z']:.2f} "  # Docking box center z coordinate parameter 对接盒中心z坐标参数
+cmd += f"--size_x {config['size_x']:.2f} "  # Docking box size x parameter 对接盒尺寸x参数
+cmd += f"--size_y {config['size_y']:.2f} "  # Docking box size y parameter 对接盒尺寸y参数
+cmd += f"--size_z {config['size_z']:.2f} "  # Docking box size z parameter 对接盒尺寸z参数
+cmd += f"--scoring {config['sf']} "  # Scoring function parameter 打分函数参数
+cmd += f"--refine_step 3 "  # Optimization step parameter 优化步骤参数
+cmd += f"--num_modes 1 "  # Number of docking modes to save 保存的对接模式数目
+cmd += f"--seed {config.get('seed', 42)} "  # Random seed parameter 随机种子参数
+cmd += f"--search_mode {search_mode} "  # Docking search mode parameter 对接搜索模式参数
+cmd += f"--dir results/{config['target']}-{search_mode} "  # Output directory parameter 输出目录参数
+
+# Write the command string to a file named "rundock.sh" for later execution
+# 将命令字符串写入名为“rundock.sh”的文件，以便稍后执行
+with open(f"rundock.sh", "w") as f:
+    f.write(cmd)
+
+# Print the command string for debugging purposes
+# 为调试目的打印命令字符串
+
+
+os.makedirs(f"results/{config['target']}-{search_mode}", exist_ok=True)
+
+os.system(f"bash rundock.sh > unidocklog.out")
